@@ -351,3 +351,107 @@ class TestScanAPI:
         )
         assert r.status_code == 400
 
+
+
+class TestGetAvailableNetworks:
+    def test_returns_list(self, monkeypatch):
+        """get_available_networks() always returns a list."""
+        import network_scanner as ns
+        result = ns.get_available_networks()
+        assert isinstance(result, list)
+
+    def test_each_entry_has_required_keys(self, monkeypatch):
+        """Each network entry contains interface, ip and network keys."""
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "_get_local_ip", lambda: "192.168.50.1")
+        result = ns.get_available_networks()
+        # At minimum the fallback should kick in
+        assert len(result) >= 1
+        for entry in result:
+            assert "interface" in entry
+            assert "ip" in entry
+            assert "network" in entry
+            import ipaddress
+            ipaddress.IPv4Network(entry["network"])  # valid CIDR
+
+    def test_fallback_when_commands_fail(self, monkeypatch):
+        """Falls back to _get_local_ip() when platform commands fail."""
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "_get_local_ip", lambda: "10.0.0.5")
+        # Make subprocess.check_output raise so the fallback path is exercised
+        import subprocess
+
+        def _raise(*a, **kw):
+            raise OSError("fail")
+
+        monkeypatch.setattr(subprocess, "check_output", _raise)
+        result = ns.get_available_networks()
+        assert len(result) == 1
+        assert result[0]["ip"] == "10.0.0.5"
+        assert result[0]["network"] == "10.0.0.0/24"
+
+    def test_loopback_excluded(self, monkeypatch):
+        """127.x.x.x addresses are never included."""
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "_get_local_ip", lambda: "127.0.0.1")
+        import subprocess
+
+        def _raise(*a, **kw):
+            raise OSError("fail")
+
+        monkeypatch.setattr(subprocess, "check_output", _raise)
+        result = ns.get_available_networks()
+        assert all(not e["ip"].startswith("127.") for e in result)
+
+
+class TestScanNetworkWithNetworkParam:
+    def test_scan_specific_network(self, monkeypatch):
+        """scan_network() respects an explicit network parameter."""
+        import network_scanner as ns
+        scanned_ips: list[str] = []
+
+        def fake_ping(ip, timeout=1):
+            scanned_ips.append(ip)
+            return ip == "10.10.10.1"
+
+        monkeypatch.setattr(ns, "_ping_host", fake_ping)
+        monkeypatch.setattr(ns, "_get_arp_table", lambda: {})
+        monkeypatch.setattr(ns, "_resolve_hostname", lambda ip: None)
+
+        result = ns.scan_network(timeout=1, max_workers=4, network="10.10.10.0/30")
+        # /30 has 2 usable hosts: .1 and .2
+        assert all(ip.startswith("10.10.10.") for ip in scanned_ips)
+        assert len(result) == 1
+        assert result[0]["ip"] == "10.10.10.1"
+
+    def test_scan_invalid_network_falls_back(self, monkeypatch):
+        """scan_network() falls back to local detection when network is invalid."""
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "_get_local_ip", lambda: "127.0.0.1")
+        result = ns.scan_network(network="not-a-cidr")
+        assert result == []
+
+
+class TestScanNetworksAPI:
+    def test_networks_endpoint_returns_list(self, client, monkeypatch):
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "get_available_networks", lambda: [
+            {"interface": "wlan0", "ip": "192.168.1.50", "network": "192.168.1.0/24"},
+        ])
+        r = client.get("/api/scan/networks")
+        assert r.status_code == 200
+        data = r.get_json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["network"] == "192.168.1.0/24"
+
+    def test_scan_endpoint_with_network_param(self, client, monkeypatch):
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "scan_network", lambda **kw: [
+            {"ip": "10.0.0.1", "mac": None, "hostname": None, "type": "other", "name": "10.0.0.1"}
+        ])
+        r = client.get("/api/scan?network=10.0.0.0%2F24")
+        assert r.status_code == 200
+        data = r.get_json()
+        assert data["network"] == "10.0.0.0/24"
+        assert data["count"] == 1

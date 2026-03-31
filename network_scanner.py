@@ -8,6 +8,7 @@ the Python standard library is used.
 """
 import ipaddress
 import logging
+import re
 import socket
 import subprocess
 import sys
@@ -128,6 +129,89 @@ def _guess_device_type(hostname: Optional[str], mac: Optional[str]) -> str:
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
+def get_available_networks() -> list[dict]:
+    """Return all available local IPv4 network interfaces (excluding loopback).
+
+    Each entry contains:
+        interface – network interface name (best-effort)
+        ip        – IPv4 address of this host on that interface
+        network   – CIDR string for the subnet (e.g. '192.168.1.0/24')
+
+    Falls back to the primary interface detected by :func:`_get_local_ip` when
+    platform-specific enumeration fails.
+    """
+    networks: list[dict] = []
+    seen_networks: set[str] = set()
+
+    def _add(interface: str, ip: str, prefix: int = 24) -> None:
+        if ip.startswith("127.") or ip.startswith("169.254."):
+            return
+        try:
+            net = str(ipaddress.IPv4Network(f"{ip}/{prefix}", strict=False))
+        except ValueError:
+            net = str(ipaddress.IPv4Network(f"{ip}/24", strict=False))
+        if net not in seen_networks:
+            seen_networks.add(net)
+            networks.append({"interface": interface, "ip": ip, "network": net})
+
+    try:
+        if sys.platform == "win32":
+            output = subprocess.check_output(
+                ["ipconfig"], text=True, timeout=5, stderr=subprocess.DEVNULL
+            )
+            current_iface = "unknown"
+            for line in output.splitlines():
+                iface_match = re.match(r"^(\S.*adapter .+):$", line)
+                if iface_match:
+                    current_iface = iface_match.group(1).strip()
+                ip_match = re.search(r"IPv4 Address[^:]*:\s*(\d+\.\d+\.\d+\.\d+)", line)
+                if ip_match:
+                    _add(current_iface, ip_match.group(1))
+        else:
+            # Try 'ip -4 addr show' (Linux), fall back to 'ifconfig' (macOS/BSD)
+            try:
+                output = subprocess.check_output(
+                    ["ip", "-4", "addr", "show"],
+                    text=True, timeout=5, stderr=subprocess.DEVNULL,
+                )
+                current_iface = "unknown"
+                for line in output.splitlines():
+                    iface_match = re.match(r"^\d+:\s+(\S+):", line)
+                    if iface_match:
+                        current_iface = iface_match.group(1)
+                    addr_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)/(\d+)", line)
+                    if addr_match:
+                        _add(current_iface, addr_match.group(1), int(addr_match.group(2)))
+            except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+                output = subprocess.check_output(
+                    ["ifconfig"], text=True, timeout=5, stderr=subprocess.DEVNULL
+                )
+                current_iface = "unknown"
+                for line in output.splitlines():
+                    iface_match = re.match(r"^(\S+)", line)
+                    if iface_match and not line.startswith(" "):
+                        current_iface = iface_match.group(1).rstrip(":")
+                    addr_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)\s+netmask\s+(\S+)", line)
+                    if addr_match:
+                        ip = addr_match.group(1)
+                        netmask = addr_match.group(2)
+                        try:
+                            prefix = ipaddress.IPv4Network(f"0.0.0.0/{netmask}").prefixlen
+                        except ValueError:
+                            prefix = 24
+                        _add(current_iface, ip, prefix)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Network interface enumeration failed: %s", exc)
+
+    # Fallback: use the primary IP determined by routing table
+    if not networks:
+        primary_ip = _get_local_ip()
+        if primary_ip != "127.0.0.1":
+            _add("default", primary_ip)
+
+    return networks
+
+
 def get_local_network() -> str:
     """Return the detected local /24 network as a CIDR string (e.g. '192.168.1.0/24')."""
     local_ip = _get_local_ip()
@@ -135,9 +219,19 @@ def get_local_network() -> str:
     return str(network)
 
 
-def scan_network(timeout: int = 1, max_workers: int = 50) -> list[dict]:
+def scan_network(
+    timeout: int = 1,
+    max_workers: int = 50,
+    network: Optional[str] = None,
+) -> list[dict]:
     """
-    Scan the local /24 subnet and return discovered hosts.
+    Scan a /24 subnet and return discovered hosts.
+
+    Parameters:
+        timeout    – per-host ping timeout in seconds
+        max_workers – parallel worker threads
+        network    – CIDR string of the network to scan (e.g. '192.168.1.0/24').
+                     When omitted the local /24 subnet is detected automatically.
 
     Each host dict contains:
         ip       – IPv4 address string
@@ -150,15 +244,25 @@ def scan_network(timeout: int = 1, max_workers: int = 50) -> list[dict]:
     on most platforms (Linux requires either cap_net_raw or running as root for
     raw sockets, but subprocess ping works for regular users).
     """
-    local_ip = _get_local_ip()
-    if local_ip == "127.0.0.1":
-        logger.warning("Could not determine local IP address; returning empty scan result")
-        return []
+    if network:
+        try:
+            net_obj = ipaddress.IPv4Network(network, strict=False)
+        except ValueError:
+            logger.warning("Invalid network %r; falling back to local detection", network)
+            net_obj = None
+    else:
+        net_obj = None
 
-    network = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
-    hosts = [str(h) for h in network.hosts()][:MAX_HOSTS]
+    if net_obj is None:
+        local_ip = _get_local_ip()
+        if local_ip == "127.0.0.1":
+            logger.warning("Could not determine local IP address; returning empty scan result")
+            return []
+        net_obj = ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
 
-    logger.info("Scanning %s (%d hosts)…", network, len(hosts))
+    hosts = [str(h) for h in net_obj.hosts()][:MAX_HOSTS]
+
+    logger.info("Scanning %s (%d hosts)…", net_obj, len(hosts))
 
     # Parallel ping sweep
     reachable: list[str] = []
