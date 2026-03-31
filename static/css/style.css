@@ -188,3 +188,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .text-muted { color: var(--text-muted); font-size: 0.9rem; }
 h2 { font-size: 1.3rem; margin: 1.5rem 0 1rem; }
 .cheap-option { background: rgba(46,204,113,0.1); }
+
+/* ─── Network Scan ──────────────────────────────────────────────────────── */
+.hidden { display: none !important; }
+.scan-status { padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--bg3); border: 1px solid var(--border); margin-bottom: 1rem; font-size: 0.95rem; }
+.scan-status.error { border-color: var(--red); color: var(--red); background: rgba(231,76,60,0.05); }
+.muted { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem; }

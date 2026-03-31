@@ -243,3 +243,111 @@ class TestPages:
     def test_schedule_page(self, client):
         r = client.get("/schedule")
         assert r.status_code == 200
+
+    def test_scan_page(self, client):
+        r = client.get("/scan")
+        assert r.status_code == 200
+        assert "Verkkolaitteet" in r.get_data(as_text=True)
+
+
+# ─── Network scanner tests ────────────────────────────────────────────────────
+
+class TestNetworkScanner:
+    def test_get_local_network_returns_cidr(self):
+        import network_scanner as ns
+        net = ns.get_local_network()
+        # Should be a valid CIDR string like "192.168.x.0/24"
+        assert "/" in net
+        import ipaddress
+        ipaddress.IPv4Network(net)  # raises if invalid
+
+    def test_guess_device_type_phone(self):
+        import network_scanner as ns
+        assert ns._guess_device_type("iphone-of-timo", None) == "phone"
+
+    def test_guess_device_type_tv(self):
+        import network_scanner as ns
+        assert ns._guess_device_type("samsung-tv", None) == "tv"
+
+    def test_guess_device_type_router(self):
+        import network_scanner as ns
+        assert ns._guess_device_type("fritzbox.home", None) == "router"
+
+    def test_guess_device_type_unknown(self):
+        import network_scanner as ns
+        assert ns._guess_device_type(None, None) == "other"
+        assert ns._guess_device_type("mystery-box", None) == "other"
+
+    def test_scan_returns_list(self, monkeypatch):
+        """scan_network() returns a list; mock the ping so no actual network I/O occurs."""
+        import network_scanner as ns
+        # Mock _ping_host to simulate one alive host
+        monkeypatch.setattr(ns, "_ping_host", lambda ip, timeout=1: ip == "127.0.0.1")
+        monkeypatch.setattr(ns, "_get_local_ip", lambda: "127.0.0.1")
+        monkeypatch.setattr(ns, "_get_arp_table", lambda: {})
+        monkeypatch.setattr(ns, "_resolve_hostname", lambda ip: None)
+        result = ns.scan_network(timeout=1, max_workers=2)
+        assert isinstance(result, list)
+
+    def test_scan_returns_empty_on_loopback(self, monkeypatch):
+        """scan_network() returns [] when local IP is 127.0.0.1."""
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "_get_local_ip", lambda: "127.0.0.1")
+        result = ns.scan_network()
+        assert result == []
+
+
+class TestScanAPI:
+    def test_scan_endpoint_returns_json(self, client, monkeypatch):
+        import network_scanner as ns
+        monkeypatch.setattr(ns, "scan_network", lambda **kw: [
+            {"ip": "192.168.1.42", "mac": "aa:bb:cc:dd:ee:ff",
+             "hostname": "testhost", "type": "computer",
+             "name": "testhost (192.168.1.42)"}
+        ])
+        r = client.get("/api/scan")
+        assert r.status_code == 200
+        data = r.get_json()
+        assert "devices" in data
+        assert "count" in data
+        assert data["count"] == 1
+        assert data["devices"][0]["ip"] == "192.168.1.42"
+
+    def test_scan_import_creates_device(self, client):
+        payload = {
+            "ip": "192.168.1.55",
+            "hostname": "mykamera",
+            "type": "camera",
+            "mac": "11:22:33:44:55:66",
+        }
+        r = client.post(
+            "/api/scan/import",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        assert r.status_code == 201
+        device = r.get_json()
+        assert device["name"] == "mykamera"
+        assert device["type"] == "camera"
+        assert device["ip"] == "192.168.1.55"
+        assert device["mac"] == "11:22:33:44:55:66"
+
+    def test_scan_import_uses_ip_as_name_when_no_hostname(self, client):
+        payload = {"ip": "192.168.1.99", "type": "other"}
+        r = client.post(
+            "/api/scan/import",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        assert r.status_code == 201
+        device = r.get_json()
+        assert device["name"] == "192.168.1.99"
+
+    def test_scan_import_missing_ip(self, client):
+        r = client.post(
+            "/api/scan/import",
+            data=json.dumps({"hostname": "ghost"}),
+            content_type="application/json",
+        )
+        assert r.status_code == 400
+

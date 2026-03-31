@@ -11,6 +11,7 @@ from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 import electricity as elec
 import models
+import network_scanner
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -82,6 +83,11 @@ def electricity_page():
         today=today,
         tomorrow=tomorrow,
     )
+
+
+@app.route("/scan")
+def scan_page():
+    return render_template("scan.html")
 
 
 @app.route("/schedule")
@@ -250,7 +256,57 @@ def api_auto_tick():
     return jsonify({"current_price_kwh": current_price_kwh, "actions": actions})
 
 
-if __name__ == "__main__":
+# ─── Network scan API ─────────────────────────────────────────────────────────
+
+@app.route("/api/scan", methods=["GET"])
+def api_scan():
+    """
+    Scan the local WLAN/LAN and return discovered devices.
+
+    Query parameters:
+        timeout  (int, default 1)  – per-host ping timeout in seconds
+        workers  (int, default 50) – parallel worker threads
+
+    Returns JSON:
+        {"network": "192.168.1.0/24", "count": N, "devices": [...]}
+    """
+    timeout = max(1, min(int(request.args.get("timeout", 1)), 10))
+    workers = max(1, min(int(request.args.get("workers", 50)), 200))
+    devices = network_scanner.scan_network(timeout=timeout, max_workers=workers)
+    local_net = network_scanner.get_local_network()
+    return jsonify({"network": local_net, "count": len(devices), "devices": devices})
+
+
+@app.route("/api/scan/import", methods=["POST"])
+def api_scan_import():
+    """
+    Import a discovered network device into the managed device list.
+
+    Expected JSON body:
+        {"ip": "192.168.1.10", "hostname": "mydevice", "type": "phone", "mac": "aa:bb:cc:..."}
+
+    Returns the newly created device object (HTTP 201).
+    """
+    payload = request.get_json(silent=True) or {}
+    ip = (payload.get("ip") or "").strip()
+    hostname = (payload.get("hostname") or "").strip() or None
+    device_type = (payload.get("type") or "other").strip()
+    mac = (payload.get("mac") or "").strip() or None
+
+    if not ip:
+        return jsonify({"error": "ip is required"}), 400
+
+    name = hostname or ip
+    icon = network_scanner.ICON_MAP.get(device_type, "🔧")
+    device = models.add_device(name, device_type, icon)
+    # Store the network metadata on the device record
+    models.update_device(device["id"], ip=ip, mac=mac, hostname=hostname)
+    # Re-fetch so the response includes ip/mac/hostname
+    device = models.get_device(device["id"])
+    return jsonify(device), 201
+
+
+
     import os as _os
     debug = _os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(debug=debug, host="0.0.0.0", port=5000)
