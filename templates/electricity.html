@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Sähkön hinta – Kotilaitteet{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Sähkön spot-hinta</h1>
+  <button class="btn btn-secondary" onclick="refreshPrices()">🔄 Päivitä hinnat</button>
+</div>
+
+{% if fetched_at %}
+<p class="text-muted">Viimeksi haettu: {{ fetched_at.strftime('%d.%m.%Y %H:%M') }} UTC</p>
+{% endif %}
+
+{% if today_prices %}
+<h2>Tänään ({{ today }})</h2>
+<div class="price-chart-wrapper">
+  <canvas id="todayChart" height="120"></canvas>
+</div>
+<p class="chart-legend">
+  <span class="legend-cheap">■</span> Halvimmat tunnit &nbsp;
+  <span class="legend-expensive">■</span> Kalliimmat tunnit
+</p>
+
+<div class="price-table-wrapper">
+  <table class="price-table">
+    <thead>
+      <tr><th>Tunti</th><th>Hinta (snt/kWh)</th><th>Hinta (€/MWh)</th><th>Luokitus</th></tr>
+    </thead>
+    <tbody>
+      {% for p in today_prices %}
+      <tr class="{% if p.is_cheap %}cheap-row{% endif %}">
+        <td>{{ "%02d:00"|format(p.hour) }} – {{ "%02d:00"|format((p.hour + 1) % 24) }}</td>
+        <td>{{ "%.2f"|format(p.price_kwh) }}</td>
+        <td>{{ "%.2f"|format(p.price_mwh) }}</td>
+        <td>{% if p.is_cheap %}<span class="badge cheap">Halpa</span>{% else %}<span class="badge normal">Normaali</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="info-box warning">
+  <p>⚠️ Tänään sähkön hintatietoja ei ole saatavilla. Tarkista internet-yhteys.</p>
+</div>
+{% endif %}
+
+{% if tomorrow_prices %}
+<h2>Huomenna ({{ tomorrow }})</h2>
+<div class="price-chart-wrapper">
+  <canvas id="tomorrowChart" height="120"></canvas>
+</div>
+<div class="price-table-wrapper">
+  <table class="price-table">
+    <thead>
+      <tr><th>Tunti</th><th>Hinta (snt/kWh)</th><th>Hinta (€/MWh)</th><th>Luokitus</th></tr>
+    </thead>
+    <tbody>
+      {% for p in tomorrow_prices %}
+      <tr class="{% if p.is_cheap %}cheap-row{% endif %}">
+        <td>{{ "%02d:00"|format(p.hour) }} – {{ "%02d:00"|format((p.hour + 1) % 24) }}</td>
+        <td>{{ "%.2f"|format(p.price_kwh) }}</td>
+        <td>{{ "%.2f"|format(p.price_mwh) }}</td>
+        <td>{% if p.is_cheap %}<span class="badge cheap">Halpa</span>{% else %}<span class="badge normal">Normaali</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<div class="info-box">
+  <h3>ℹ️ Tietoa hinnoista</h3>
+  <p>Hinnat haetaan automaattisesti <strong>spot-hinta.fi</strong> -palvelusta, joka tarjoaa
+     Suomen sähköpörssin (NordPool) hinnat sisältäen ALV:n. Hinnat ovat suuntaa-antavia
+     &mdash; lopullinen sähkölaskusi riippuu myös siirto- ja veromaksuista.</p>
+  <p>Halvimmat tunnit (alimmat 1/3 päivän tunneista) on merkitty vihreällä.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+{% if today_prices %}
+const todayPrices = {{ today_prices | tojson }};
+const cheapHours = {{ cheapest_hours | tojson }};
+drawPriceChart('todayChart', todayPrices, cheapHours, null);
+{% endif %}
+{% if tomorrow_prices %}
+const tomorrowPrices = {{ tomorrow_prices | tojson }};
+drawPriceChart('tomorrowChart', tomorrowPrices, [], null);
+{% endif %}
+
+function refreshPrices() {
+  fetch('/api/electricity/refresh', {method: 'POST'})
+    .then(r => r.json())
+    .then(() => location.reload());
+}
+</script>
+{% endblock %}

@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}Ajastukset – Kotilaitteet{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Ajastukset</h1>
+</div>
+
+{% if cheapest_hours %}
+<div class="info-box success">
+  <strong>💡 Tänään halvimmat tunnit:</strong>
+  {% for h in cheapest_hours | sort %}
+    <span class="hour-badge">{{ "%02d:00"|format(h) }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="two-col">
+  <!-- Add schedule form -->
+  <div class="card">
+    <h2>Lisää ajastus</h2>
+    <form onsubmit="addSchedule(event)">
+      <div class="form-group">
+        <label>Laite</label>
+        <select id="sched-device" required>
+          {% for d in devices %}
+          <option value="{{ d.id }}">{{ d.icon }} {{ d.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Kellonaika (tunti)</label>
+        <select id="sched-hour">
+          {% for h in range(24) %}
+          <option value="{{ h }}" {% if h in cheapest_hours %}class="cheap-option"{% endif %}>
+            {{ "%02d:00"|format(h) }}{% if h in cheapest_hours %} ⭐ halpa{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Toiminto</label>
+        <select id="sched-action">
+          <option value="on">Käynnistä (ON)</option>
+          <option value="off">Sammuta (OFF)</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary">Lisää ajastus</button>
+    </form>
+  </div>
+
+  <!-- Scheduled list -->
+  <div class="card">
+    <h2>Aktiiviset ajastukset</h2>
+    {% if schedules %}
+    <table class="price-table" id="schedule-table">
+      <thead>
+        <tr><th>Laite</th><th>Kellonaika</th><th>Toiminto</th><th></th></tr>
+      </thead>
+      <tbody id="schedule-body">
+        {% for s in schedules %}
+        <tr id="sched-row-{{ s.id }}">
+          <td>
+            {% set d = device_map.get(s.device_id) %}
+            {% if d %}{{ d.icon }} {{ d.name }}{% else %}(poistettu){% endif %}
+          </td>
+          <td>{{ "%02d:00"|format(s.hour) }}{% if s.hour in cheapest_hours %} ⭐{% endif %}</td>
+          <td><span class="badge {% if s.action == 'on' %}cheap{% else %}badge-off{% endif %}">
+            {{ "Käynnistä" if s.action == 'on' else "Sammuta" }}
+          </span></td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteSchedule({{ s.id }})">🗑️</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p id="no-schedules" class="text-muted">Ei ajastuksia. Lisää ajastus vasemmalta.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="info-box">
+  <h3>ℹ️ Miten ajastukset toimivat?</h3>
+  <p>Ajastukset tallentuvat sovellukseen. Jotta ne suoritetaan automaattisesti, lisää
+     cron-tehtävä, joka kutsuu <code>POST /api/auto/tick</code> -rajapintaa kerran tunnissa.</p>
+  <p>Esimerkki cron-tehtävästä (joka tunti):</p>
+  <pre>0 * * * * curl -X POST http://localhost:5000/api/auto/tick</pre>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function addSchedule(event) {
+  event.preventDefault();
+  const deviceId = parseInt(document.getElementById('sched-device').value);
+  const hour = parseInt(document.getElementById('sched-hour').value);
+  const action = document.getElementById('sched-action').value;
+  fetch('/api/schedules', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({device_id: deviceId, hour: hour, action: action})
+  })
+  .then(r => r.json())
+  .then(() => location.reload())
+  .catch(e => alert('Virhe: ' + e));
+}
+
+function deleteSchedule(id) {
+  if (!confirm('Poistetaanko ajastus?')) return;
+  fetch('/api/schedules/' + id, {method: 'DELETE'})
+    .then(() => {
+      const row = document.getElementById('sched-row-' + id);
+      if (row) row.remove();
+    });
+}
+</script>
+{% endblock %}
