@@ -4,20 +4,36 @@
 {% block content %}
 <div class="page-header">
   <h1>🔍 Verkkolaitteiden haku</h1>
-  <button class="btn btn-primary" id="scan-btn" onclick="startScan()">Hae verkkolaitteet</button>
 </div>
 
 <div class="info-box" id="scan-info">
   <h3>ℹ️ Tietoja</h3>
-  <p>Sovellus skannaa kotisi lähiverkon (WLAN/LAN) ja etsii kaikki siihen liitetyt laitteet.
+  <p>Sovellus skannaa valitsemasi lähiverkon (WLAN/LAN) ja etsii kaikki siihen liitetyt laitteet.
      Löydetyt laitteet näytetään alla, ja voit lisätä haluamasi laitteet suoraan hallintaan.</p>
   <p>Skannaus voi kestää joitakin sekunteja.</p>
 </div>
 
+<!-- Step 1: Network selection -->
+<div id="network-selection-section">
+  <h2>1. Valitse skannattava verkko</h2>
+  <div id="network-loading" class="scan-status">Haetaan verkkoja…</div>
+  <div id="network-list" class="hidden">
+    <p>Valitse verkko, josta etsitään kotilaitteita:</p>
+    <div id="network-radios"></div>
+    <button class="btn btn-primary" id="scan-btn" onclick="startScan()" disabled>
+      Hae verkkolaitteet
+    </button>
+  </div>
+  <div id="network-error" class="scan-status error hidden">
+    Verkkoja ei löydy. Tarkista verkkoyhteys.
+  </div>
+</div>
+
+<!-- Step 2: Scan results -->
 <div id="scan-status" class="scan-status hidden"></div>
 
 <div id="scan-results" class="hidden">
-  <h2 id="results-heading">Löydetyt laitteet</h2>
+  <h2>2. Löydetyt laitteet</h2>
   <p id="network-info" class="muted"></p>
   <table class="device-table">
     <thead>
@@ -36,28 +52,107 @@
 <div id="no-devices" class="info-box hidden">
   <p>⚠️ Lähiverkosta ei löydetty laitteita. Varmista, että olet samassa verkossa.</p>
 </div>
+
+<!-- Confirmation modal -->
+<div id="import-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-body">
+  <div class="modal-box">
+    <h3 id="modal-title">Lisää laite hallintaan?</h3>
+    <p id="modal-body"></p>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="modal-confirm-btn" onclick="confirmImport()">✅ Lisää hallintaan</button>
+      <button class="btn btn-secondary" onclick="closeModal()">Peruuta</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+  let _pendingImportBtn = null;
+
+  // ── On page load: fetch available networks ──────────────────────────────────
+  document.addEventListener('DOMContentLoaded', loadNetworks);
+
+  // Close modal on Escape key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  async function loadNetworks() {
+    const loading = document.getElementById('network-loading');
+    const list    = document.getElementById('network-list');
+    const errBox  = document.getElementById('network-error');
+    const radios  = document.getElementById('network-radios');
+    const scanBtn = document.getElementById('scan-btn');
+
+    try {
+      const res = await fetch('/api/scan/networks');
+      if (!res.ok) throw new Error(await res.text());
+      const networks = await res.json();
+
+      loading.classList.add('hidden');
+
+      if (!networks || networks.length === 0) {
+        errBox.classList.remove('hidden');
+        return;
+      }
+
+      networks.forEach((net, idx) => {
+        const id = `net-radio-${idx}`;
+        const label = document.createElement('label');
+        label.className = 'network-option';
+        label.htmlFor = id;
+
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'network';
+        radio.id = id;
+        radio.value = net.network;
+        radio.addEventListener('change', () => { scanBtn.disabled = false; });
+        if (idx === 0) {
+          radio.checked = true;
+          scanBtn.disabled = false;
+        }
+
+        label.appendChild(radio);
+        label.appendChild(document.createTextNode(
+          ` ${net.network}  (${net.interface} — ${net.ip})`
+        ));
+        radios.appendChild(label);
+        radios.appendChild(document.createElement('br'));
+      });
+
+      list.classList.remove('hidden');
+    } catch (e) {
+      loading.classList.add('hidden');
+      errBox.textContent = 'Verkkoja ei voitu hakea: ' + e.message;
+      errBox.classList.remove('hidden');
+    }
+  }
+
+  // ── Scan the selected network ───────────────────────────────────────────────
   async function startScan() {
-    const btn = document.getElementById('scan-btn');
-    const status = document.getElementById('scan-status');
-    const results = document.getElementById('scan-results');
+    const btn      = document.getElementById('scan-btn');
+    const status   = document.getElementById('scan-status');
+    const results  = document.getElementById('scan-results');
     const noDevices = document.getElementById('no-devices');
-    const tbody = document.getElementById('scan-table-body');
+    const tbody    = document.getElementById('scan-table-body');
     const networkInfo = document.getElementById('network-info');
+
+    const selected = document.querySelector('input[name="network"]:checked');
+    const network  = selected ? selected.value : '';
 
     btn.disabled = true;
     btn.textContent = '⏳ Skannataan…';
-    status.textContent = 'Skannataan lähiverkkoa, odota…';
+    status.textContent = `Skannataan verkkoa ${network}, odota…`;
     status.classList.remove('hidden', 'error');
     results.classList.add('hidden');
     noDevices.classList.add('hidden');
     tbody.innerHTML = '';
 
     try {
-      const res = await fetch('/api/scan');
+      const url = '/api/scan' + (network ? `?network=${encodeURIComponent(network)}` : '');
+      const res = await fetch(url);
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
 
@@ -73,11 +168,11 @@
           const importBtn = document.createElement('button');
           importBtn.className = 'btn btn-sm btn-primary';
           importBtn.textContent = '➕ Lisää hallintaan';
-          importBtn.dataset.ip = d.ip;
+          importBtn.dataset.ip       = d.ip;
           importBtn.dataset.hostname = d.hostname || '';
-          importBtn.dataset.mac = d.mac || '';
-          importBtn.dataset.type = d.type;
-          importBtn.addEventListener('click', function() { importDevice(this); });
+          importBtn.dataset.mac      = d.mac || '';
+          importBtn.dataset.type     = d.type;
+          importBtn.addEventListener('click', function() { promptImport(this); });
           const td = document.createElement('td');
           td.appendChild(importBtn);
           tr.innerHTML = `
@@ -100,14 +195,36 @@
     }
   }
 
+  // ── Confirmation modal ──────────────────────────────────────────────────────
+  function promptImport(btn) {
+    _pendingImportBtn = btn;
+    const name = btn.dataset.hostname || btn.dataset.ip;
+    document.getElementById('modal-body').textContent =
+      `Haluatko lisätä laitteen "${name}" (${btn.dataset.ip}) hallintaan?`;
+    document.getElementById('import-modal').classList.remove('hidden');
+  }
+
+  function closeModal() {
+    document.getElementById('import-modal').classList.add('hidden');
+    _pendingImportBtn = null;
+  }
+
+  async function confirmImport() {
+    const btn = _pendingImportBtn;
+    closeModal();
+    if (!btn) return;
+    await importDevice(btn);
+  }
+
+  // ── Import device (called after confirmation) ───────────────────────────────
   async function importDevice(btn) {
     btn.disabled = true;
     btn.textContent = '⏳';
     const device = {
-      ip: btn.dataset.ip,
+      ip:       btn.dataset.ip,
       hostname: btn.dataset.hostname || null,
-      mac: btn.dataset.mac || null,
-      type: btn.dataset.type,
+      mac:      btn.dataset.mac || null,
+      type:     btn.dataset.type,
     };
     try {
       const res = await fetch('/api/scan/import', {
@@ -134,4 +251,5 @@
       .replace(/"/g, '&quot;');
   }
 </script>
+
 {% endblock %}

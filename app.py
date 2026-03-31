@@ -258,12 +258,21 @@ def api_auto_tick():
 
 # ─── Network scan API ─────────────────────────────────────────────────────────
 
+@app.route("/api/scan/networks", methods=["GET"])
+def api_scan_networks():
+    """Return all available local network interfaces that can be scanned."""
+    networks = network_scanner.get_available_networks()
+    return jsonify(networks)
+
+
 @app.route("/api/scan", methods=["GET"])
 def api_scan():
     """
     Scan the local WLAN/LAN and return discovered devices.
 
     Query parameters:
+        network  (str, optional)   – CIDR network to scan (e.g. '192.168.1.0/24').
+                                     Defaults to the automatically detected local network.
         timeout  (int, default 1)  – per-host ping timeout in seconds
         workers  (int, default 50) – parallel worker threads
 
@@ -272,9 +281,10 @@ def api_scan():
     """
     timeout = max(1, min(int(request.args.get("timeout", 1)), 10))
     workers = max(1, min(int(request.args.get("workers", 50)), 200))
-    devices = network_scanner.scan_network(timeout=timeout, max_workers=workers)
-    local_net = network_scanner.get_local_network()
-    return jsonify({"network": local_net, "count": len(devices), "devices": devices})
+    network = (request.args.get("network") or "").strip() or None
+    devices = network_scanner.scan_network(timeout=timeout, max_workers=workers, network=network)
+    scanned_net = network or network_scanner.get_local_network()
+    return jsonify({"network": scanned_net, "count": len(devices), "devices": devices})
 
 
 @app.route("/api/scan/import", methods=["POST"])
@@ -307,6 +317,7 @@ def api_scan_import():
 
 
 
+if __name__ == "__main__":
     import os as _os
     debug = _os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(debug=debug, host="0.0.0.0", port=5000)
