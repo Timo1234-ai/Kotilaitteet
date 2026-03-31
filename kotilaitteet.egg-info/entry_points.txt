@@ -1,0 +1,2 @@
+[console_scripts]
+kotilaitteet = kotilaitteet.cli:main

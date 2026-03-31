@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: kotilaitteet
+Version: 0.1.0
+Summary: Home device manager with electricity price control
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: requests>=2.31.0
+
+# Kotilaitteet
