@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Koontinäyttö – Kotilaitteet{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Koontinäyttö</h1>
+  <p class="subtitle">{{ now.strftime('%A %d.%m.%Y %H:%M') }}</p>
+</div>
+
+{% if current_price %}
+<div class="price-banner {% if current_price.is_cheap %}cheap{% else %}expensive{% endif %}">
+  <span class="price-label">Sähkön hinta nyt:</span>
+  <span class="price-value">{{ "%.2f"|format(current_price.price_kwh) }} snt/kWh</span>
+  <span class="price-badge">{% if current_price.is_cheap %}✅ Halpa tunti{% else %}⚠️ Kallis tunti{% endif %}</span>
+</div>
+{% else %}
+<div class="price-banner no-data">
+  <span class="price-label">ℹ️ Sähkön hintatietoja ei saatavilla</span>
+</div>
+{% endif %}
+
+<h2>Laitteet</h2>
+<div class="device-grid">
+  {% for device in devices %}
+  <div class="device-card {% if device.state %}on{% else %}off{% endif %}" id="card-{{ device.id }}">
+    <div class="device-icon">{{ device.icon }}</div>
+    <div class="device-info">
+      <h3>{{ device.name }}</h3>
+      <span class="device-type">{{ device.type }}</span>
+      {% if device.auto %}
+        <span class="badge auto">AUTO max {{ device.max_price }} snt/kWh</span>
+      {% endif %}
+    </div>
+    <div class="device-controls">
+      <button class="toggle-btn {% if device.state %}active{% endif %}"
+              data-id="{{ device.id }}"
+              onclick="toggleDevice({{ device.id }}, this)">
+        {% if device.state %}PÄÄLLÄ{% else %}POIS{% endif %}
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if today_prices %}
+<h2>Tänään sähkön hinta (snt/kWh)</h2>
+<div class="price-chart-wrapper">
+  <canvas id="priceChart" height="120"></canvas>
+</div>
+<p class="chart-legend">
+  <span class="legend-cheap">■</span> Halvimmat tunnit &nbsp;
+  <span class="legend-expensive">■</span> Kalliimmat tunnit &nbsp;
+  <span class="legend-current">▶</span> Nykyinen tunti
+</p>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if today_prices %}
+<script>
+const prices = {{ today_prices | tojson }};
+const cheapHours = {{ cheapest_hours | tojson }};
+const currentHour = {{ now.hour }};
+drawPriceChart('priceChart', prices, cheapHours, currentHour);
+</script>
+{% endif %}
+{% endblock %}

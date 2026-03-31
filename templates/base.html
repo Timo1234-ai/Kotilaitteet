@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Kotilaitteet{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-brand">🏠 Kotilaitteet</div>
+    <ul class="nav-links">
+      <li><a href="{{ url_for('index') }}" {% if request.endpoint == 'index' %}class="active"{% endif %}>Koontinäyttö</a></li>
+      <li><a href="{{ url_for('devices_page') }}" {% if request.endpoint == 'devices_page' %}class="active"{% endif %}>Laitteet</a></li>
+      <li><a href="{{ url_for('electricity_page') }}" {% if request.endpoint == 'electricity_page' %}class="active"{% endif %}>Sähkön hinta</a></li>
+      <li><a href="{{ url_for('schedule_page') }}" {% if request.endpoint == 'schedule_page' %}class="active"{% endif %}>Ajastukset</a></li>
+    </ul>
+  </nav>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <p>Kotilaitteet &mdash; Kodin automaatiojärjestelmä</p>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

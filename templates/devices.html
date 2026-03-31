@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Laitteet – Kotilaitteet{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Laitteet</h1>
+  <button class="btn btn-primary" onclick="showAddDeviceModal()">+ Lisää laite</button>
+</div>
+
+<div class="device-table-wrapper">
+  <table class="device-table">
+    <thead>
+      <tr>
+        <th>Laite</th>
+        <th>Tyyppi</th>
+        <th>Tila</th>
+        <th>Automaatio</th>
+        <th>Max hinta (snt/kWh)</th>
+        <th>Toiminnot</th>
+      </tr>
+    </thead>
+    <tbody id="device-table-body">
+      {% for device in devices %}
+      <tr id="row-{{ device.id }}">
+        <td><span class="device-icon-sm">{{ device.icon }}</span> {{ device.name }}</td>
+        <td><span class="type-badge type-{{ device.type }}">{{ device.type }}</span></td>
+        <td>
+          <button class="toggle-btn {% if device.state %}active{% endif %}"
+                  data-id="{{ device.id }}"
+                  onclick="toggleDevice({{ device.id }}, this)">
+            {% if device.state %}PÄÄLLÄ{% else %}POIS{% endif %}
+          </button>
+        </td>
+        <td>
+          <label class="switch">
+            <input type="checkbox" {% if device.auto %}checked{% endif %}
+                   onchange="setAuto({{ device.id }}, this.checked)">
+            <span class="slider"></span>
+          </label>
+        </td>
+        <td>
+          <input type="number" class="price-input" value="{{ device.max_price }}" min="0" step="0.1"
+                 onchange="setMaxPrice({{ device.id }}, this.value)">
+        </td>
+        <td>
+          <button class="btn btn-sm btn-danger" onclick="deleteDevice({{ device.id }})">🗑️</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="info-box">
+  <h3>ℹ️ Automaattinen ohjaus</h3>
+  <p>Kun automaattinen ohjaus on käytössä, laite käynnistyy automaattisesti kun sähkön spot-hinta on
+     enintään asetetun maksimihintarajan verran. Laite sammutetaan, kun hinta ylittää rajan.</p>
+  <p>Käynnistä automaattinen tarkistus kutsumalla <code>POST /api/auto/tick</code> esimerkiksi cron-jobilla kerran tunnissa.</p>
+</div>
+
+<!-- Add Device Modal -->
+<div class="modal" id="addDeviceModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2>Lisää uusi laite</h2>
+      <button class="modal-close" onclick="closeModal('addDeviceModal')">✕</button>
+    </div>
+    <form onsubmit="addDevice(event)">
+      <div class="form-group">
+        <label>Laitteen nimi</label>
+        <input type="text" id="new-device-name" required placeholder="esim. Kylpyhuoneen lämmitin">
+      </div>
+      <div class="form-group">
+        <label>Tyyppi</label>
+        <select id="new-device-type">
+          <option value="heating">Lämmitys</option>
+          <option value="lighting">Valaistus</option>
+          <option value="ac">Ilmastointi</option>
+          <option value="ev_charger">Sähköauton lataus</option>
+          <option value="jacuzzi">Poreallas</option>
+          <option value="other">Muu</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Ikoni</label>
+        <select id="new-device-icon">
+          <option value="🔥">🔥 Lämmitys</option>
+          <option value="💡">💡 Valo</option>
+          <option value="❄️">❄️ Ilmastointi</option>
+          <option value="🔌">🔌 Lataus</option>
+          <option value="🛁">🛁 Poreallas</option>
+          <option value="🏮">🏮 Ulkovalo</option>
+          <option value="🔧">🔧 Muu</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('addDeviceModal')">Peruuta</button>
+        <button type="submit" class="btn btn-primary">Lisää laite</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
